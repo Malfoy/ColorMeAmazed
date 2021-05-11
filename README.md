@@ -23,6 +23,15 @@ Here ColorMeAmazed will
 
 ColorMeAmazed will consider any file containing ".fa" or ".fasta" in its filename as a FASTA file
 
+Each line will be considered a single sequence regarless of its length
+
+Thus seq1 and seq2 will not be matched
+```
+>seq1
+ATC
+>seq2
+ATCG
+```
 ## Algorithm overview
 
 ### First step
@@ -37,6 +46,11 @@ Each sequence is associated with the list of filename containing it
 ### Third step
 ColorMeAmazed will output all sequences seen more than C times in the files (without overestimation) along with the list of filename containing it
 
+### C parameter
+
+The C parameter is a critical  as the shared sequences are stored in memory in an expensive manner.
+
+A low C parameter can index a large amount of sequences and need a very high amount of memory
 ## Sample output
 ```
 >./file1.fa ./file2.da
