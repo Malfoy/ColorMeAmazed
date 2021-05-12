@@ -1,4 +1,3 @@
-#include "count_min_sketch.h"
 #include <vector>
 #include <string>
 #include <filesystem>
@@ -6,8 +5,13 @@
 #include <fstream>
 #include <algorithm>
 #include <unistd.h>
+#include <assert.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 #include "strict_fstream.hpp"
 #include "zstr.hpp"
+#include "count_min_sketch.h"
+
 
 
 
@@ -17,6 +21,8 @@
 
 
 using namespace std;
+
+
 
 
 
@@ -54,11 +60,12 @@ uint64_t insert_fasta_in_filter(const string& filename,CountMinSketch& cms){
         getline(f, useless);   // read a comment, useless
         getline(f, ref);		// read the ACGT sequence
         if(not ref.empty()){
+            seq_number++;
             cms_add(&cms,ref.c_str());
             // cout<<"i add:   "<<ref<<endl;
         }
         ref=useless="";
-        seq_number++;
+        
     }
     return seq_number;
 }
@@ -67,7 +74,6 @@ uint64_t insert_fasta_in_filter(const string& filename,CountMinSketch& cms){
 
 void add_index(const unitig& u, vector<list_unitig>& index){
     // cout<<"add_index"<<endl;
-    uint64_t size(u.sequence.size());
     if(index.size()<u.sequence.size()){
         index.resize(u.sequence.size());
     }
@@ -86,13 +92,14 @@ uint64_t insert_fasta_in_index(const string& filename,CountMinSketch& cms,vector
         getline(f, ref);		// read the ACGT sequence
         unitig u={ref,{filename}};
         if(not ref.empty()){
-            if(cms_check_min(&cms,ref.c_str())>=min_count){
+            if((uint64_t)cms_check_min(&cms,ref.c_str())>=min_count){
                 add_index(u,index);
                 seq_number++;
             }
+            ref.clear();
         }
     }
-    return 0;
+    return seq_number;
 }
 
 
@@ -104,7 +111,10 @@ struct less_than_unitig
     }
 };
 
-uint64_t output_index(vector<list_unitig>& index, const uint64_t min_count, const string& output_filename){
+
+
+uint64_t output_index(vector<list_unitig>& index, const uint64_t min_count, const string& output_filename,uint64_t& overestimated_sequence){
+    uint64_t output_sequence(0);
     ofstream f(output_filename);
     for(uint64_t i=0;i<index.size();i++){
         if(not index[i].list.empty()){
@@ -121,6 +131,9 @@ uint64_t output_index(vector<list_unitig>& index, const uint64_t min_count, cons
                             f<<output_colors[k]<<" ";
                         }
                         f<<"\n"<<output_unitig<<"\n";
+                        output_sequence++;
+                    }else{
+                        overestimated_sequence++;
                     }
                     output_unitig=index[i].list[j].sequence;
                     output_colors=index[i].list[j].colors;
@@ -132,11 +145,12 @@ uint64_t output_index(vector<list_unitig>& index, const uint64_t min_count, cons
                     f<<output_colors[k]<<" ";
                 }
                 f<<"\n"<<output_unitig<<"\n";
+                output_sequence++;
             }
         }
     }
     f.close();
-    return 0;
+    return output_sequence;
 }
 
 
@@ -153,6 +167,51 @@ void help_display(){
     cout<<"Technical options (you should know what you are doing)"<<endl;
     cout<<"-w INT This fix the width of the min count sketch  Default: 1,000,000,000 "<<endl;
     cout<<"-d INT This fix the depth of the min count sketch  Default: 2 "<<endl;
+}
+
+
+uint64_t getMemorySelfMaxUsed (){
+	uint64_t result = 0;
+	struct rusage usage;
+	if (getrusage(RUSAGE_SELF, &usage)==0)  {  result = usage.ru_maxrss;  }
+	return result/1024;
+}
+
+string intToString(uint64_t n){
+	string result;
+	uint64_t order=1000000000000000000;
+	bool started(false);
+	while(order!=1){
+		if(n/order>=1){
+			string local( to_string(n/order));
+			if(started){
+				if(local.size()==2){
+					result+='0';
+				}
+				if(local.size()==1){
+					result+="00";
+				}
+			}
+			result+=local+",";
+			started=true;
+			n%=order;
+		}else if (started){
+			result+="000,";
+		}
+		order/=1000;
+	}
+	string local( to_string(n));
+	if(started){
+		if(local.size()==2){
+			result+='0';
+		}
+		if(local.size()==1){
+			result+="00";
+		}
+	}
+	result+=local;
+
+	return result;
 }
 
 
@@ -183,7 +242,7 @@ int main(int argc, char** argv) {
 				cms_depth=stoi(optarg);
 				break;
             case 't':
-				num_thread=stoi(optarg);
+				num_thread+=stoi(optarg);
 				break;
             case 'p':
 				path=(optarg);
@@ -200,22 +259,55 @@ int main(int argc, char** argv) {
         help_display();
         return 0;
     }
+    uint64_t file_read(0);
+    uint64_t sequence_read(0);
+    uint64_t sequence_indexed(0);
+    uint64_t output_sequence(0);
+    uint64_t overestimated_sequence(0);
+
     CountMinSketch cms;
     cms_init(&cms, (cms_width), cms_depth);
+    cout<<"Insertion in the filter"<<endl;
+    auto start = std::chrono::system_clock::now();
+
+    for (const auto & entry : std::filesystem::directory_iterator(path)){
+        if(is_fasta(entry.path())){
+            sequence_read+=insert_fasta_in_filter(entry.path(),cms);
+            file_read++;
+            if(file_read%10==0)
+                cout<<"-"<<flush;
+        }
+    }
+    cout<<endl;
+    auto middle = std::chrono::system_clock::now();
+    chrono::duration<double> elapsed_seconds = middle - start;
+	cout << "Elapsed time: " << elapsed_seconds.count() << "s ("<< (double)elapsed_seconds.count()/file_read<<"s per file)"<<endl;
+    cout<<"Memory used: " <<intToString(getMemorySelfMaxUsed())<<" MB ("<<intToString(getMemorySelfMaxUsed()*1024*1024/file_read)<<" B per file)"<<endl;
+
+    cout<<"Frequent sequences indexing"<<endl;
     vector<list_unitig> index;
+    file_read=0;
     for (const auto & entry : std::filesystem::directory_iterator(path)){
         if(is_fasta(entry.path())){
-            // cout<<"insert_fasta_in_filter "<<entry.path()<<endl;
-            insert_fasta_in_filter(entry.path(),cms);
+            sequence_indexed+=insert_fasta_in_index(entry.path(),cms,index,min_count);
+            file_read++;
+            if(file_read%10==0)
+                cout<<"-"<<flush;
         }
     }
-    for (const auto & entry : std::filesystem::directory_iterator(path)){
-        if(is_fasta(entry.path())){
-            // cout<<"insert_fasta_in_index "<<entry.path()<<endl;
-            insert_fasta_in_index(entry.path(),cms,index,min_count);
-        }
-    }
-    output_index(index,min_count,output);
+    cout<<endl;
+     auto end = std::chrono::system_clock::now();
+    elapsed_seconds = end- middle ;
+	cout << "Elapsed time: " << elapsed_seconds.count() << "s ("<< (double)elapsed_seconds.count()/file_read<<"s per file)"<<endl;
+    cout<<"Memory used: " <<intToString(getMemorySelfMaxUsed())<<" MB ("<<intToString(getMemorySelfMaxUsed()*1024*1024/file_read)<<" B per file)"<<endl;
+    cout<<"Output shared sequences"<<endl;
+    output_sequence=output_index(index,min_count,output,overestimated_sequence);
+
+    cout<<"I read "<<intToString(file_read)<<" files containing "<<intToString(sequence_read)<<" sequences" <<endl;
+    cout<<intToString(sequence_indexed)<<" sequences passed the filter and indexed"<<endl;
+    cout<<intToString(overestimated_sequence)<<" sequences were overestimated"<<endl;
+    cout<<intToString(output_sequence)<<" sequences were actually output"<<endl;
+    
         
     return 0;
 }

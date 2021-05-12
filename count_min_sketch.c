@@ -322,11 +322,11 @@ static void __read_from_file(CountMinSketch* cms, FILE *fp, short on_disk, const
     int offset = (sizeof(int32_t) * 2) + sizeof(long);
     fseek(fp, offset * -1, SEEK_END);
 
-    fread(&cms->width, sizeof(int32_t), 1, fp);
-    fread(&cms->depth, sizeof(int32_t), 1, fp);
+    size_t osef=fread(&cms->width, sizeof(int32_t), 1, fp);
+    osef+=fread(&cms->depth, sizeof(int32_t), 1, fp);
     cms->confidence = 1 - (1 / pow(2, cms->depth));
     cms->error_rate = 2 / (double) cms->width;
-    fread(&cms->elements_added, sizeof(int64_t), 1, fp);
+    osef+=fread(&cms->elements_added, sizeof(int64_t), 1, fp);
 
     rewind(fp);
     size_t length = cms->width * cms->depth;
