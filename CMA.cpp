@@ -14,8 +14,6 @@
 
 
 
-
-
 //TODO multithread
 
 
@@ -24,18 +22,22 @@ using namespace std;
 
 
 
-
-
 struct unitig{
     string sequence;
-    vector<string>colors;
+    vector<uint32_t>colors;
 };
 
 
 
 struct list_unitig{
     vector<unitig> list;
-    uint64_t unitigs_length;
+};
+
+
+
+struct index_color{
+    vector<list_unitig> size_list;
+    vector<string> filenames;
 };
 
 
@@ -83,17 +85,19 @@ void add_index(const unitig& u, vector<list_unitig>& index){
 
 
 
-uint64_t insert_fasta_in_index(const string& filename,CountMinSketch& cms,vector<list_unitig>& index, const uint64_t min_count){
+uint64_t insert_fasta_in_index(const string& filename,CountMinSketch& cms, index_color& index, const uint64_t min_count){
     zstr::ifstream f(filename);
+    index.filenames.push_back(filename);
+    uint32_t filename_indice(index.filenames.size()-1);
     string ref, useless;
     uint64_t seq_number(0);
     while (not f.eof()) {
         getline(f, useless);   // read a comment, useless
         getline(f, ref);		// read the ACGT sequence
-        unitig u={ref,{filename}};
+        unitig u={ref,{filename_indice}};
         if(not ref.empty()){
             if((uint64_t)cms_check_min(&cms,ref.c_str())>=min_count){
-                add_index(u,index);
+                add_index(u,index.size_list);
                 seq_number++;
             }
             ref.clear();
@@ -113,36 +117,36 @@ struct less_than_unitig
 
 
 
-uint64_t output_index(vector<list_unitig>& index, const uint64_t min_count, const string& output_filename,uint64_t& overestimated_sequence){
+uint64_t output_index(index_color& index, const uint64_t min_count, const string& output_filename,uint64_t& overestimated_sequence){
     uint64_t output_sequence(0);
     ofstream f(output_filename);
-    for(uint64_t i=0;i<index.size();i++){
-        if(not index[i].list.empty()){
-            sort(index[i].list.begin(),index[i].list.end(),less_than_unitig());
-            string output_unitig(index[i].list[0].sequence);
-            vector<string> output_colors(index[i].list[0].colors);
-            for(uint64_t j=1;j<index[i].list.size();j++){
-                if(index[i].list[j].sequence==output_unitig){
-                    output_colors.push_back(index[i].list[j].colors[0]);
+    for(uint64_t i=0;i<index.size_list.size();i++){
+        if(not index.size_list[i].list.empty()){
+            sort(index.size_list[i].list.begin(),index.size_list[i].list.end(),less_than_unitig());
+            string output_unitig(index.size_list[i].list[0].sequence);
+            vector<uint32_t> output_colors(index.size_list[i].list[0].colors);
+            for(uint64_t j=1;j<index.size_list[i].list.size();j++){
+                if(index.size_list[i].list[j].sequence==output_unitig){
+                    output_colors.push_back(index.size_list[i].list[j].colors[0]);
                 }else{
                     if(output_colors.size()>=min_count){
                         f<<">";
                         for (size_t k = 0; k < output_colors.size(); k++){
-                            f<<output_colors[k]<<" ";
+                            f<<index.filenames[output_colors[k]]<<" ";
                         }
                         f<<"\n"<<output_unitig<<"\n";
                         output_sequence++;
                     }else{
                         overestimated_sequence++;
                     }
-                    output_unitig=index[i].list[j].sequence;
-                    output_colors=index[i].list[j].colors;
+                    output_unitig=index.size_list[i].list[j].sequence;
+                    output_colors=index.size_list[i].list[j].colors;
                 }
             }
             if(output_colors.size()>=min_count){
                 f<<">";
                 for (size_t k = 0; k < output_colors.size(); k++){
-                    f<<output_colors[k]<<" ";
+                    f<<index.filenames[output_colors[k]]<<" ";
                 }
                 f<<"\n"<<output_unitig<<"\n";
                 output_sequence++;
@@ -285,7 +289,7 @@ int main(int argc, char** argv) {
     cout<<"Memory used: " <<intToString(getMemorySelfMaxUsed())<<" MB ("<<intToString(getMemorySelfMaxUsed()*1024*1024/file_read)<<" B per file)"<<endl;
 
     cout<<"Frequent sequences indexing"<<endl;
-    vector<list_unitig> index;
+    index_color index;
     file_read=0;
     for (const auto & entry : std::filesystem::directory_iterator(path)){
         if(is_fasta(entry.path())){

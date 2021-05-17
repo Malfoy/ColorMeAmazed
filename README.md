@@ -58,3 +58,13 @@ CAGCTAGCTGATCGTACGTGCATGACTGACTGATCGTCA
 ```
 
 Mean that CAGCTAGCTGATCGTACGTGCATGACTGACTGATCGTCA is found in file1.fa file2.fa
+
+## Potential future features (aka todo list)
+Multithreading
+
+Handle FASTQ/truncated FASTA
+
+Handle reverse-complement
+
+Use file of file input instead of folder
+
